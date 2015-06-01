@@ -197,11 +197,11 @@ void *hid_discovery(void *a)
 void *cli_connect(void *a)
 {
   struct client *cli = (struct client *)a;
-  int i, r, search, color, txlen;
-  char command[32] = { '\0' };
-  char txbuf[128] = { '\0' };
-  char lookahead;
   struct lightdev *ptr;
+  int i, r, search, color, txlen;
+  char lookahead = '\0';
+  char txbuf[128] = { '\0' };
+  char command[128] = { '\0' };
 
   //char s[INET6_ADDRSTRLEN];
   //inet_ntop(cli->addr.ss_family, &((struct sockaddr_in *)&cli->addr)->sin_addr, s, sizeof s);
@@ -210,17 +210,19 @@ void *cli_connect(void *a)
 
   while (running)
   {
-    memset(command, 0, sizeof command);
+    memset(command, 0, sizeof(command));
     if (lookahead)
     {
+      //printf("using lookahead %02hhx\n", lookahead);
       command[0] = lookahead;
-      lookahead = 0;
+      lookahead = '\0';
     }
     else
     {
       r = recv(cli->cfd, command, 1, 0);
       if (r <= 0) break;
     }
+    //printf("command %c %02hhx\n", command[0], command[0]);
 
     // explicit client quit
     if ('.' == command[0])
@@ -232,7 +234,7 @@ void *cli_connect(void *a)
     if ('s' == command[0])
     {
       // read color (and possibly one extra character)
-      memset(command, 0, sizeof command);
+      memset(command, 0, sizeof(command));
       for (i = 0; i < sizeof(command)-1; )
       {
         r = recv(cli->cfd, command+i, 1, 0);
@@ -242,6 +244,7 @@ void *cli_connect(void *a)
           if (!isdigit(command[i]))
           {
             lookahead = command[i];
+            //printf("set lookahead %02hhx\n", lookahead);
             command[i] = '\0';
             break;
           }
@@ -254,7 +257,7 @@ void *cli_connect(void *a)
       memset(command, 0, sizeof command);
       if (',' == lookahead)
       {
-        lookahead = 0;
+        lookahead = '\0';
         for (i = 0; i < sizeof(command)-1 && i < 12; ) // xxxx:xxxx:xx
         {
           r = recv(cli->cfd, command+i, 1, 0);
@@ -264,6 +267,7 @@ void *cli_connect(void *a)
             if (!isdigit(command[i]) && ':' != command[i])
             {
               lookahead = command[i];
+              //printf("set lookahead %02hhx\n", lookahead);
               command[i] = '\0';
               break;
             }
