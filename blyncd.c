@@ -244,7 +244,7 @@ void *cli_connect(void *a)
           if (!isdigit(command[i]))
           {
             lookahead = command[i];
-            //printf("set lookahead %02hhx\n", lookahead);
+            //printf("set lookahead %c %02hhx\n", lookahead, lookahead);
             command[i] = '\0';
             break;
           }
@@ -264,10 +264,10 @@ void *cli_connect(void *a)
           if (r < 0) break;
           if (r > 0)
           {
-            if (!isdigit(command[i]) && ':' != command[i])
+            if (!isxdigit(command[i]) && ':' != command[i])
             {
               lookahead = command[i];
-              //printf("set lookahead %02hhx\n", lookahead);
+              //printf("set lookahead %c %02hhx\n", lookahead, lookahead);
               command[i] = '\0';
               break;
             }
