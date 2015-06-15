@@ -224,6 +224,12 @@ void *cli_connect(void *a)
     }
     //printf("command %c %02hhx\n", command[0], command[0]);
 
+    // ignore whitespace
+    if (isspace(command[0]))
+    {
+      continue;
+    }
+
     // explicit client quit
     if ('.' == command[0])
     {
