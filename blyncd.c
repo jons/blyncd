@@ -33,6 +33,7 @@
 
 struct lightdev
 {
+  char alias;
   char *path;
 
   struct lightdev *next;
@@ -73,7 +74,7 @@ char *colormap[] =
 
 // program state
 volatile int running = 1;
-
+volatile int debug = 0;
 
 /**
  * hid write report
@@ -109,7 +110,7 @@ int setlight (const char *path, int idx)
 {
   unsigned char setbuf[9] = { 0, 0x55, 0x53, 0x42, 0x43, 0, 0x40, 0x2, 0xff };
   setbuf[8] = colortab[idx];
-  //printf("hw_write %s %d\n", path, idx);
+  if (debug) printf("hw_write %s %d\n", path, idx);
   return hw_write(path, setbuf, 9);
 }
 
@@ -143,8 +144,11 @@ void *hid_discovery(void *a)
           ok = 0;
           break;
         }
+        cur->alias = '.';
         cur->path = strdup(hids_cursor->path);  // TODO: verify not null
         cur->next = NULL;
+
+        if (debug) printf("discover: %s\n", cur->path);
 
         if (NULL == lights)
           lights = cur;
@@ -199,7 +203,7 @@ void *cli_connect(void *a)
   struct client *cli = (struct client *)a;
   struct lightdev *ptr;
   int i, r, search, color, txlen;
-  char lookahead = '\0';
+  char alias, lookahead = '\0';
   char txbuf[128] = { '\0' };
   char command[128] = { '\0' };
 
@@ -210,10 +214,10 @@ void *cli_connect(void *a)
 
   while (running)
   {
-    memset(command, 0, sizeof(command));
+    memset(command, 0, sizeof command);
     if (lookahead)
     {
-      //printf("using lookahead %02hhx\n", lookahead);
+      if (debug) printf("using lookahead %02hhx\n", lookahead);
       command[0] = lookahead;
       lookahead = '\0';
     }
@@ -222,7 +226,7 @@ void *cli_connect(void *a)
       r = recv(cli->cfd, command, 1, 0);
       if (r <= 0) break;
     }
-    //printf("command %c %02hhx\n", command[0], command[0]);
+    if (debug) printf("command %02hhx\n", command[0]);
 
     // ignore whitespace
     if (isspace(command[0]))
@@ -236,11 +240,70 @@ void *cli_connect(void *a)
       break;
     }
 
+    // set device alias
+    if ('a' == command[0])
+    {
+      // read one character followed by a device id
+      // ensure alias character isalpha, otherwise give it to lookahead
+      memset(command, 0, sizeof command);
+      r = recv(cli->cfd, command, 1, 0);
+      if (r < 0) break;
+      if (!isalpha(command[0]) && command[0] != '.')
+      {
+        lookahead = command[0];
+        command[i] = '\0';
+        if (debug) printf("set lookahead %02hhx\n", lookahead);
+        continue;
+      }
+      alias = command[0];
+      if (debug) printf("setalias %c\n", alias);
+
+      memset(command, 0, sizeof command);
+      for (i = 0; i < sizeof(command)-1 && i < 12; ) // xxxx:xxxx:xx
+      {
+        r = recv(cli->cfd, command+i, 1, 0);
+        if (r < 0) break;
+        if (r > 0)
+        {
+          if (i == 0 && command[0] == ',') continue; // optional, leave i=0 and overwrite
+
+          if (!isxdigit(command[i]) && ':' != command[i])
+          {
+            lookahead = command[i];
+            command[i] = '\0';
+            if (debug) printf("set lookahead %02hhx\n", lookahead);
+            break;
+          }
+        }
+        i++; // but what choice do we have?
+      }
+      if (r < 0) break;
+      if (!strlen(command)) continue;
+
+      // iterate lightdev map looking for alias and device
+      // - clear when found elsewhere
+      // - assign to matching device id
+      pthread_mutex_lock(&cli->state->lock_lights);
+      ptr = cli->state->lights;
+      while (ptr != NULL)
+      {
+        if (ptr->alias == alias)
+          ptr->alias = '.';
+
+        if (!strcmp(ptr->path, command))
+          ptr->alias = alias;
+
+        ptr = ptr->next;
+      }
+      pthread_mutex_unlock(&cli->state->lock_lights);
+      continue;
+    }
+
     // set color,device
     if ('s' == command[0])
     {
       // read color (and possibly one extra character)
-      memset(command, 0, sizeof(command));
+      memset(command, 0, sizeof command);
       for (i = 0; i < sizeof(command)-1; )
       {
         r = recv(cli->cfd, command+i, 1, 0);
@@ -250,8 +313,8 @@ void *cli_connect(void *a)
           if (!isdigit(command[i]))
           {
             lookahead = command[i];
-            //printf("set lookahead %c %02hhx\n", lookahead, lookahead);
             command[i] = '\0';
+            if (debug) printf("set lookahead %02hhx\n", lookahead);
             break;
           }
         }
@@ -259,30 +322,34 @@ void *cli_connect(void *a)
       }
       if (r < 0) break;
       color = strtol(command, NULL, 10);
-
-      memset(command, 0, sizeof command);
+      if (debug) printf("setcolor %x\n", color);
+      search = 0;
       if (',' == lookahead)
       {
         lookahead = '\0';
+        memset(command, 0, sizeof command);
         for (i = 0; i < sizeof(command)-1 && i < 12; ) // xxxx:xxxx:xx
         {
           r = recv(cli->cfd, command+i, 1, 0);
           if (r < 0) break;
           if (r > 0)
           {
-            if (!isxdigit(command[i]) && ':' != command[i])
+            if (i == 0 && isalpha(command[0])) // assume its an alias
+              break;
+
+            if (!isxdigit(command[i]) && ':' != command[i]) // look for ID
             {
               lookahead = command[i];
-              //printf("set lookahead %c %02hhx\n", lookahead, lookahead);
               command[i] = '\0';
+              if (debug) printf("set lookahead %02hhx\n", lookahead);
               break;
             }
           }
           i++; // but what choice do we have?
         }
         if (r < 0) break;
+        search = strlen(command);
       }
-      search = strlen(command);
 
       pthread_mutex_lock(&cli->state->lock_lights);
       ptr = cli->state->lights;
@@ -292,7 +359,7 @@ void *cli_connect(void *a)
         {
           setlight(ptr->path, color);
         }
-        else if (!strcmp(ptr->path, command))
+        else if (!strcmp(ptr->path, command) || ptr->alias == command[0])
         {
           setlight(ptr->path, color);
           break;
@@ -310,6 +377,12 @@ void *cli_connect(void *a)
       while (ptr != NULL)
       {
         send(cli->cfd, ptr->path, strlen(ptr->path), 0);
+        if (isprint(ptr->alias) && ptr->alias != '.')
+        {
+          memset(txbuf, 0, sizeof txbuf);
+          txlen = snprintf(txbuf, sizeof(txbuf)-1, " %c", ptr->alias);
+          send(cli->cfd, txbuf, txlen, 0);
+        }
         send(cli->cfd, "\n", 1, 0);
         ptr = ptr->next;
       }
@@ -371,7 +444,7 @@ int service_create(struct blync *state)
 void sig_interrupt(int n, siginfo_t *info, void *context)
 {
   running = 0;
-  fprintf(stderr, "interrupt %d\n", n);
+  if (debug) fprintf(stderr, "interrupt %d\n", n);
 }
 
 
@@ -397,6 +470,9 @@ int main(int argc, char ** argv)
   sigaction(SIGHUP, &sig_handler, NULL);
   sigaction(SIGINT, &sig_handler, NULL);
   sigaction(SIGQUIT, &sig_handler, NULL);
+
+  if (argc > 1)
+    debug = (0 == strcasecmp("-d", argv[1])) || (0 == strcasecmp("--debug", argv[1]));
 
   hid_init();
 
