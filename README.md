@@ -44,3 +44,7 @@ to blyncd with whatever timing is appropriate to your application!
 note that if you use a line-oriented protocol, the whitespace will cause delay, probably on the scale
 of micro- or milliseconds, as it is shunted into the lookahead buffer (one character deep) and comes
 "back around" to the top level of the stream parser before being discarded.
+
+here we have the Very Small Blynclight Array:
+
+![VSBA](VSBA.jpg)
